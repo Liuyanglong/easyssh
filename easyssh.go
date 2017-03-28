@@ -131,6 +131,12 @@ func (ssh_conf *MakeConfig) Stream(command string, timeout int) (stdout chan str
 		res := make(chan bool, 1)
 
 		go func() {
+			defer func() {
+				if r := recover(); r != nil {
+					fmt.Println("Recovered in Stream()", r)
+				}
+			}()
+
 			for stdoutScanner.Scan() {
 				stdoutChan <- stdoutScanner.Text()
 			}
@@ -169,10 +175,14 @@ func (ssh_conf *MakeConfig) Run(command string, timeout int) (outStr string, err
 		select {
 		case isTimeout = <-doneChan:
 			stillGoing = false
-		case outline := <-stdoutChan:
-			outStr += outline + "\n"
-		case errline := <-stderrChan:
-			errStr += errline + "\n"
+		case outline, ok := <-stdoutChan:
+			if ok {
+				outStr += outline + "\n"
+			}
+		case errline, ok := <-stderrChan:
+			if ok {
+				errStr += errline + "\n"
+			}
 		}
 	}
 	// return the concatenation of all signals from the output channel
