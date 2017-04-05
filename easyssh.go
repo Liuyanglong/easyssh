@@ -166,7 +166,7 @@ func (ssh_conf *MakeConfig) Stream(command string, timeout int) (conn *ssh.Clien
 
 // Runs command on remote machine and returns its stdout as a string
 func (ssh_conf *MakeConfig) Run(command string, timeout int) (outStr string, errStr string, isTimeout bool, err error) {
-	conn, ssh_session, stdoutChan, stderrChan, doneChan, err := ssh_conf.Stream(command, timeout)
+	conn, _, stdoutChan, stderrChan, doneChan, err := ssh_conf.Stream(command, timeout)
 	defer conn.Close()
 
 	if err != nil {
