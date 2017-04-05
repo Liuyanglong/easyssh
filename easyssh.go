@@ -57,7 +57,7 @@ func getKeyFile(keypath string) (ssh.Signer, error) {
 }
 
 // connects to remote server using MakeConfig struct and returns *ssh.Session
-func (ssh_conf *MakeConfig) connect() (*ssh.Session, error) {
+func (ssh_conf *MakeConfig) connect() (*ssh.Client, *ssh.Session, error) {
 	// auths holds the detected ssh auth methods
 	auths := []ssh.AuthMethod{}
 
@@ -82,34 +82,35 @@ func (ssh_conf *MakeConfig) connect() (*ssh.Session, error) {
 
 	client, err := ssh.Dial("tcp", ssh_conf.Server+":"+ssh_conf.Port, config)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	session, err := client.NewSession()
 	if err != nil {
-		return nil, err
+		client.Close()
+		return nil, nil, err
 	}
 
-	return session, nil
+	return client, session, nil
 }
 
 // Stream returns one channel that combines the stdout and stderr of the command
 // as it is run on the remote machine, and another that sends true when the
 // command is done. The sessions and channels will then be closed.
-func (ssh_conf *MakeConfig) Stream(command string, timeout int) (stdout chan string, stderr chan string, done chan bool, err error) {
+func (ssh_conf *MakeConfig) Stream(command string, timeout int) (conn *ssh.Client, ssh_session *ssh.Session, stdout chan string, stderr chan string, done chan bool, err error) {
 	// connect to remote host
-	session, err := ssh_conf.connect()
+	conn, session, err := ssh_conf.connect()
 	if err != nil {
-		return stdout, stderr, done, err
+		return conn, ssh_session, stdout, stderr, done, err
 	}
 	// connect to both outputs (they are of type io.Reader)
 	outReader, err := session.StdoutPipe()
 	if err != nil {
-		return stdout, stderr, done, err
+		return conn, ssh_session, stdout, stderr, done, err
 	}
 	errReader, err := session.StderrPipe()
 	if err != nil {
-		return stdout, stderr, done, err
+		return conn, ssh_session, stdout, stderr, done, err
 	}
 	// combine outputs, create a line-by-line scanner
 	stdoutReader := io.MultiReader(outReader)
@@ -157,15 +158,17 @@ func (ssh_conf *MakeConfig) Stream(command string, timeout int) (stdout chan str
 			stderrChan <- "Run Command Timeout!"
 			done <- false
 		}
-
 		session.Close()
+
 	}(stdoutScanner, stderrScanner, stdoutChan, stderrChan, done)
-	return stdoutChan, stderrChan, done, err
+	return conn, session, stdoutChan, stderrChan, done, err
 }
 
 // Runs command on remote machine and returns its stdout as a string
 func (ssh_conf *MakeConfig) Run(command string, timeout int) (outStr string, errStr string, isTimeout bool, err error) {
-	stdoutChan, stderrChan, doneChan, err := ssh_conf.Stream(command, timeout)
+	conn, ssh_session, stdoutChan, stderrChan, doneChan, err := ssh_conf.Stream(command, timeout)
+	defer conn.Close()
+
 	if err != nil {
 		return outStr, errStr, isTimeout, err
 	}
@@ -191,11 +194,12 @@ func (ssh_conf *MakeConfig) Run(command string, timeout int) (outStr string, err
 
 // Scp uploads sourceFile to remote machine like native scp console app.
 func (ssh_conf *MakeConfig) Scp(sourceFile string, etargetFile string) error {
-	session, err := ssh_conf.connect()
+	conn, session, err := ssh_conf.connect()
 
 	if err != nil {
 		return err
 	}
+	defer conn.Close()
 	defer session.Close()
 
 	targetFile := filepath.Base(etargetFile)
